@@ -47,3 +47,20 @@ class MergeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SkillTests(unittest.TestCase):
+    def test_skill_targets(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as t:
+            src = pathlib.Path(t) / "skills"
+            (src / "onboard-repo").mkdir(parents=True)
+            (src / "onboard-repo" / "SKILL.md").write_text("x")
+            (src / "stray.txt").write_text("y")
+            out = iu.skill_targets(src, pathlib.Path("/h/.claude/skills"))
+            self.assertEqual(out, [(src / "onboard-repo" / "SKILL.md",
+                                    pathlib.Path("/h/.claude/skills/onboard-repo/SKILL.md"))])
+
+    def test_missing_skills_dir(self):
+        import pathlib
+        self.assertEqual(iu.skill_targets(pathlib.Path("/nope"), pathlib.Path("/h")), [])
