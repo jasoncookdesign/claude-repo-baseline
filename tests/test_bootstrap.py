@@ -89,8 +89,9 @@ def quiet():
 class FakeClone:
     """Stands in for subprocess.run: seeds the clone dir and records commands and staged CLAUDE.md text."""
 
-    def __init__(self, claude_md=None):
+    def __init__(self, claude_md=None, open_pr_heads=()):
         self.claude_md, self.calls, self.staged = claude_md, [], {}
+        self.open_pr_heads = list(open_pr_heads)
 
     def __call__(self, argv, **kw):
         argv = list(argv)
@@ -101,6 +102,9 @@ class FakeClone:
         if argv[:2] == ["git", "add"] and argv[2] == "CLAUDE.md":
             with open(os.path.join(kw["cwd"], "CLAUDE.md"), newline="") as f:
                 self.staged["CLAUDE.md"] = f.read()
+        if argv[:3] == ["gh", "pr", "list"]:
+            head = argv[argv.index("--head") + 1]
+            return mock.Mock(returncode=0, stdout="1\n" if head in self.open_pr_heads else "")
         return mock.Mock(returncode=0, stdout="")
 
 
@@ -148,6 +152,13 @@ class DisciplinesBlockTests(unittest.TestCase):
         with mock.patch.object(b.subprocess, "run", side_effect=fake), quiet():
             b.refresh_disciplines("o/r", BLOCK)
         self.assertIn("git checkout -b chore/agentic-sdlc-disciplines-aaaaaaa", fake.calls)
+
+    def test_refresh_skips_when_its_pr_is_already_open(self):
+        fake = FakeClone(claude_md="# repo\n", open_pr_heads=["chore/agentic-sdlc-disciplines-aaaaaaa"])
+        with mock.patch.object(b.subprocess, "run", side_effect=fake), quiet():
+            changed = b.refresh_disciplines("o/r", BLOCK)
+        self.assertFalse(changed)
+        self.assertFalse([c for c in fake.calls if c.startswith(("gh repo clone", "git push", "gh pr create"))])
 
     def test_refresh_does_not_create_a_missing_claude_md(self):
         fake = FakeClone()

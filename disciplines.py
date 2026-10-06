@@ -57,6 +57,8 @@ def _demote(markdown, levels=2):
 def render_block(sources, sha):
     if not sources:
         raise ValueError("no discipline sources to render")
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError(f"sha must be a full lowercase commit id, got {sha!r}")
     parts = [f"{BEGIN} @{sha[:7]} -->", PREAMBLE.format(repo=SOURCE_REPO, sha=sha, sha7=sha[:7])]
     parts += [_demote(text.strip()) for _, text in sources]
     parts.append(END)

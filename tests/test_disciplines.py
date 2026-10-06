@@ -50,6 +50,11 @@ class RenderBlockTests(unittest.TestCase):
         self.assertIn("\n###### Deep\n", block)
         self.assertNotIn("####### ", block)
 
+    def test_sha_must_be_a_full_lowercase_commit_id(self):
+        for bad in ("A" * 40, "abc", "g" * 40):
+            with self.assertRaises(ValueError):
+                d.render_block(SOURCES, bad)
+
     def test_empty_sources_rejected(self):
         with self.assertRaises(ValueError):
             d.render_block([], SHA)

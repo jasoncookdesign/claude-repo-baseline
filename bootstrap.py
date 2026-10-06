@@ -128,6 +128,12 @@ def _onboard_files(repo, tier, block):
 def refresh_disciplines(repo, block):
     """Open a PR that brings the repo's disciplines block up to date. False if it already was."""
     branch = f"chore/agentic-sdlc-disciplines-{disciplines.block_sha7(block)}"
+    open_prs = subprocess.run(["gh", "pr", "list", "--repo", repo, "--head", branch, "--state", "open",
+                               "--json", "number", "-q", ".[].number"],
+                              check=True, capture_output=True, text=True).stdout.strip()
+    if open_prs:
+        print(f"{repo}: refresh PR #{open_prs.split()[0]} for this commit is already open")
+        return False
     with tempfile.TemporaryDirectory() as tmp:
         run = _clone_on_branch(repo, tmp, branch)
         if not _write_claude_md(tmp, block, create=False):
