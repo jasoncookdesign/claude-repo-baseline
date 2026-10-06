@@ -5,6 +5,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import bootstrap as b
+import disciplines as d
 
 
 class PlanTests(unittest.TestCase):
@@ -70,13 +71,85 @@ class IdentityTests(unittest.TestCase):
     def test_onboarding_pins_identity_in_clone_before_commit(self):
         calls = []
         with mock.patch.object(b.subprocess, "run", side_effect=lambda argv, **kw: calls.append(list(argv))):
-            b._onboard_files("o/r", "standard")
+            b._onboard_files("o/r", "standard", BLOCK)
         flat = [" ".join(c) for c in calls]
         commit = next(i for i, c in enumerate(flat) if c.startswith("git commit"))
         email = next(i for i, c in enumerate(flat) if c == "git config user.email github@jasoncookdesign.com")
         name = next(i for i, c in enumerate(flat) if c == "git config user.name Jason Cook")
         self.assertLess(email, commit)
         self.assertLess(name, commit)
+
+
+class FakeClone:
+    """Stands in for subprocess.run: seeds the clone dir and records commands and staged CLAUDE.md text."""
+
+    def __init__(self, claude_md=None):
+        self.claude_md, self.calls, self.staged = claude_md, [], {}
+
+    def __call__(self, argv, **kw):
+        argv = list(argv)
+        self.calls.append(" ".join(argv))
+        if argv[:3] == ["gh", "repo", "clone"] and self.claude_md is not None:
+            with open(os.path.join(argv[4], "CLAUDE.md"), "w") as f:
+                f.write(self.claude_md)
+        if argv[:2] == ["git", "add"] and argv[2] == "CLAUDE.md":
+            with open(os.path.join(kw["cwd"], "CLAUDE.md")) as f:
+                self.staged["CLAUDE.md"] = f.read()
+        return mock.Mock(returncode=0, stdout="")
+
+
+BLOCK = d.render_block([("disciplines/t.md", "# T\n\nTOKEN-BLOCK-c0de\n")], "a" * 40)
+
+
+class DisciplinesBlockTests(unittest.TestCase):
+    def test_new_claude_md_gets_template_and_block(self):
+        fake = FakeClone()
+        with mock.patch.object(b.subprocess, "run", side_effect=fake):
+            b._onboard_files("o/r", "scratch", BLOCK)
+        text = fake.staged["CLAUDE.md"]
+        self.assertTrue(text.startswith("# REPO_NAME"))
+        self.assertIn("TOKEN-BLOCK-c0de", text)
+
+    def test_existing_claude_md_is_kept_and_gets_block(self):
+        fake = FakeClone(claude_md="@AGENTS.md\n")
+        with mock.patch.object(b.subprocess, "run", side_effect=fake):
+            b._onboard_files("o/r", "scratch", BLOCK)
+        text = fake.staged["CLAUDE.md"]
+        self.assertTrue(text.startswith("@AGENTS.md\n"))
+        self.assertIn("TOKEN-BLOCK-c0de", text)
+        self.assertNotIn("REPO_NAME", text)
+
+    def test_refresh_opens_pr_on_its_own_branch_when_block_changes(self):
+        fake = FakeClone(claude_md="# repo\n")
+        with mock.patch.object(b.subprocess, "run", side_effect=fake):
+            changed = b.refresh_disciplines("o/r", BLOCK)
+        self.assertTrue(changed)
+        self.assertIn("TOKEN-BLOCK-c0de", fake.staged["CLAUDE.md"])
+        self.assertIn("git checkout -b chore/agentic-sdlc-disciplines", fake.calls)
+        commit = next(i for i, c in enumerate(fake.calls) if c.startswith("git commit"))
+        email = fake.calls.index("git config user.email github@jasoncookdesign.com")
+        self.assertLess(email, commit)
+        self.assertTrue(any(c.startswith("gh pr create") for c in fake.calls))
+
+    def test_refresh_is_a_no_op_when_block_is_current(self):
+        fake = FakeClone(claude_md=d.upsert_block("# repo\n", BLOCK))
+        with mock.patch.object(b.subprocess, "run", side_effect=fake):
+            changed = b.refresh_disciplines("o/r", BLOCK)
+        self.assertFalse(changed)
+        self.assertFalse([c for c in fake.calls if c.startswith(("git commit", "git push", "gh pr create"))])
+
+    def test_disciplines_mode_does_not_need_a_tier(self):
+        with mock.patch.object(b, "refresh_disciplines", return_value=False) as refresh, \
+             mock.patch.object(b.disciplines, "fetch_sources", return_value=([("disciplines/t.md", "# T\n")], "b" * 40)):
+            self.assertEqual(b.main(["o/r", "--disciplines", "--apply"]), 0)
+        self.assertEqual(refresh.call_args.args[0], "o/r")
+        self.assertIn("@bbbbbbb", refresh.call_args.args[1])
+
+    def test_disciplines_mode_dry_run_changes_nothing(self):
+        with mock.patch.object(b, "refresh_disciplines") as refresh, \
+             mock.patch.object(b.disciplines, "fetch_sources", return_value=([("disciplines/t.md", "# T\n")], "b" * 40)):
+            self.assertEqual(b.main(["o/r", "--disciplines"]), 0)
+        refresh.assert_not_called()
 
 
 if __name__ == "__main__":
