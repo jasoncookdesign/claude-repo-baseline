@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Onboard one repo: apply GitHub repo settings and open a PR with the baseline files.
 
-Usage: python3 bootstrap.py OWNER/REPO --tier live|private|scratch [--apply]
+Usage: python3 bootstrap.py OWNER/REPO --tier standard|scratch [--apply]
 Default is a dry run that prints the plan. Needs `gh` authenticated locally.
-Tiers: live = deploys on merge (protect main); private = settings only, no deploy;
-scratch = settings only, no protection and no workflow.
+Tiers: standard = protect main, add the cleanup workflow and CLAUDE.md;
+scratch = settings and CLAUDE.md only, no protection and no workflow.
 """
 import argparse
 import json
@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
-TIERS = ("live", "private", "scratch")
+TIERS = ("standard", "scratch")
 WORKFLOW = ".github/workflows/delete-unmerged-pr-branch.yml"
 
 
@@ -29,7 +29,7 @@ def repo_settings_calls(repo, tier):
     _validate(repo, tier)
     calls = [{"method": "PATCH", "path": f"repos/{repo}",
               "fields": {"delete_branch_on_merge": True, "allow_auto_merge": False}}]
-    if tier in ("live", "private"):
+    if tier == "standard":
         calls.append({"method": "PUT", "path": f"repos/{repo}/branches/main/protection",
                       "body": {"required_status_checks": None, "enforce_admins": True,
                                "required_pull_request_reviews": {"required_approving_review_count": 0},
@@ -51,6 +51,14 @@ def gh_argv(call):
     if "body" in call:
         argv += ["--input", "-"]
     return argv
+
+
+def describe_call(call):
+    """Printable form of a call, including the JSON body it will send."""
+    line = " ".join(gh_argv(call))
+    if "body" in call:
+        line += "\n" + json.dumps(call["body"], indent=2)
+    return line
 
 
 def _onboard_files(repo, tier):
@@ -81,7 +89,7 @@ def main(argv):
     a = ap.parse_args(argv)
     calls = repo_settings_calls(a.repo, a.tier)
     for c in calls:
-        print(" ".join(gh_argv(c)))
+        print(describe_call(c))
     print("files:", ", ".join(files_for_tier(a.tier)))
     if not a.apply:
         print("(dry run; pass --apply to execute)")
