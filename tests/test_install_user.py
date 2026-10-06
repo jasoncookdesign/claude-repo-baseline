@@ -45,9 +45,6 @@ class MergeTests(unittest.TestCase):
         self.assertNotIn("RULES\n", b.replace("RULES v2", ""))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class SkillTests(unittest.TestCase):
     def test_skill_targets(self):
@@ -64,3 +61,7 @@ class SkillTests(unittest.TestCase):
     def test_missing_skills_dir(self):
         import pathlib
         self.assertEqual(iu.skill_targets(pathlib.Path("/nope"), pathlib.Path("/h")), [])
+
+
+if __name__ == "__main__":
+    unittest.main()
