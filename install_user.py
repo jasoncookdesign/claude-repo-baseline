@@ -50,6 +50,17 @@ def merge_claude_md(existing, block):
     return existing + sep + body
 
 
+def skill_targets(src_root, dst_root):
+    """(src, dst) pairs for every file under src_root/<skill>/."""
+    if not src_root.is_dir():
+        return []
+    pairs = []
+    for f in sorted(src_root.glob("*/**/*")):
+        if f.is_file():
+            pairs.append((f, dst_root / f.relative_to(src_root)))
+    return pairs
+
+
 def _backup(path):
     if path.exists():
         shutil.copy2(path, str(path) + ".bak")
@@ -73,6 +84,9 @@ def main(argv):
     home.mkdir(exist_ok=True)
     (home / "hooks").mkdir(exist_ok=True)
     shutil.copy2(HERE / "hooks" / "guard_merge.py", hook_dst)
+    for src, dst in skill_targets(HERE / "skills", home / "skills"):
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
     _backup(settings_p)
     settings_p.write_text(json.dumps(merged, indent=2) + "\n")
     _backup(md_p)
