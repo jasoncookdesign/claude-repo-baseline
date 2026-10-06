@@ -16,6 +16,7 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 TIERS = ("standard", "scratch")
 WORKFLOW = ".github/workflows/delete-unmerged-pr-branch.yml"
+IDENTITY = ("Jason Cook", "github@jasoncookdesign.com")  # pinned so the global git config cannot leak in
 
 
 def _validate(repo, tier):
@@ -66,6 +67,8 @@ def _onboard_files(repo, tier):
     with tempfile.TemporaryDirectory() as tmp:
         run = lambda *a: subprocess.run(a, cwd=tmp, check=True)
         subprocess.run(["gh", "repo", "clone", repo, tmp], check=True)
+        run("git", "config", "user.name", IDENTITY[0])
+        run("git", "config", "user.email", IDENTITY[1])
         run("git", "checkout", "-b", "chore/claude-baseline")
         for rel in files_for_tier(tier):
             dst = pathlib.Path(tmp) / rel
