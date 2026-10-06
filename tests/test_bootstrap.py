@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import bootstrap as b
@@ -60,6 +61,22 @@ class PlanTests(unittest.TestCase):
     def test_describe_call_without_body_is_one_line(self):
         plan = b.repo_settings_calls("o/r", "standard")
         self.assertEqual(b.describe_call(plan[0]).count("\n"), 0)
+
+
+class IdentityTests(unittest.TestCase):
+    def test_identity_is_jason_cook_with_correct_email(self):
+        self.assertEqual(b.IDENTITY, ("Jason Cook", "github@jasoncookdesign.com"))
+
+    def test_onboarding_pins_identity_in_clone_before_commit(self):
+        calls = []
+        with mock.patch.object(b.subprocess, "run", side_effect=lambda argv, **kw: calls.append(list(argv))):
+            b._onboard_files("o/r", "standard")
+        flat = [" ".join(c) for c in calls]
+        commit = next(i for i, c in enumerate(flat) if c.startswith("git commit"))
+        email = next(i for i, c in enumerate(flat) if c == "git config user.email github@jasoncookdesign.com")
+        name = next(i for i, c in enumerate(flat) if c == "git config user.name Jason Cook")
+        self.assertLess(email, commit)
+        self.assertLess(name, commit)
 
 
 if __name__ == "__main__":
