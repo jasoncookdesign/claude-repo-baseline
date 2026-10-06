@@ -29,7 +29,7 @@ Private repos on GitHub Free can't have branch protection, so use `scratch` for 
 
 ## Disciplines block
 `CLAUDE.md` carries a marker-delimited block generated from `jasoncookdesign/agentic-sdlc` (disciplines plus repository hygiene) and pinned to one commit. A repo's `CLAUDE.md` is the one instruction file that every session loads, cloud and scheduled sessions included, so this is how the disciplines travel. Never hand-edit the block. Change agentic-sdlc, then refresh:
-`python3 bootstrap.py OWNER/REPO --disciplines` (dry run), then `--apply`. That opens a `chore/agentic-sdlc-disciplines` PR, or does nothing if the block is already current. It only touches `CLAUDE.md`, so Claude may merge it.
+`python3 bootstrap.py OWNER/REPO --disciplines` (dry run), then `--apply`. That opens a `chore/agentic-sdlc-disciplines-<sha7>` PR, or does nothing if the block is already current. It never creates a missing `CLAUDE.md`: onboard first. It only touches `CLAUDE.md`, so Claude may merge it.
 
 ## Rules this sets up
 Claude merges its own PRs except those touching `.claude/` or `.github/` (enforced by the guard hook). Never commit or force-push to main. Roll back with a `revert:` PR.

@@ -74,23 +74,38 @@ def _clone_on_branch(repo, tmp, branch):
     return run
 
 
-def _write_claude_md(tmp, block):
-    """Create CLAUDE.md from the template if missing, then upsert the disciplines block. True if changed."""
+def _write_claude_md(tmp, block, create):
+    """Upsert the disciplines block into CLAUDE.md, keeping its line endings. True if the file changed.
+
+    A missing CLAUDE.md is created from the template when `create` is set, and left alone otherwise.
+    """
     path = pathlib.Path(tmp) / "CLAUDE.md"
-    before = path.read_text() if path.exists() else None
+    if path.exists():
+        with open(path, newline="") as f:
+            before = f.read()
+    elif create:
+        before = None
+    else:
+        print("no CLAUDE.md in the repo; onboard it with --tier first")
+        return False
     base = before if before is not None else (HERE / "repo" / "CLAUDE.md.tmpl").read_text()
+    if "\r\n" in base:
+        block = block.replace("\n", "\r\n")
     after = disciplines.upsert_block(base, block)
     if after == before:
         return False
-    path.write_text(after)
+    with open(path, "w", newline="") as f:
+        f.write(after)
     return True
 
 
 def _onboard_files(repo, tier, block):
     with tempfile.TemporaryDirectory() as tmp:
         run = _clone_on_branch(repo, tmp, "chore/claude-baseline")
-        if _write_claude_md(tmp, block):
+        staged = False
+        if _write_claude_md(tmp, block, create=True):
             run("git", "add", "CLAUDE.md")
+            staged = True
         if WORKFLOW in files_for_tier(tier):
             dst = pathlib.Path(tmp) / WORKFLOW
             if dst.exists():
@@ -99,6 +114,10 @@ def _onboard_files(repo, tier, block):
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_text((HERE / "repo" / "delete-unmerged-pr-branch.yml").read_text())
                 run("git", "add", WORKFLOW)
+                staged = True
+        if not staged:
+            print(f"{repo}: baseline files already current; no PR opened")
+            return
         run("git", "commit", "-m", "chore: add Claude baseline files")
         run("git", "push", "-u", "origin", "chore/claude-baseline")
         run("gh", "pr", "create", "--title", "chore: add Claude baseline files",
@@ -108,10 +127,10 @@ def _onboard_files(repo, tier, block):
 
 def refresh_disciplines(repo, block):
     """Open a PR that brings the repo's disciplines block up to date. False if it already was."""
-    branch = "chore/agentic-sdlc-disciplines"
+    branch = f"chore/agentic-sdlc-disciplines-{disciplines.block_sha7(block)}"
     with tempfile.TemporaryDirectory() as tmp:
         run = _clone_on_branch(repo, tmp, branch)
-        if not _write_claude_md(tmp, block):
+        if not _write_claude_md(tmp, block, create=False):
             print(f"{repo}: disciplines block already current")
             return False
         run("git", "add", "CLAUDE.md")
@@ -132,6 +151,7 @@ def main(argv):
                       help="only refresh the agentic-sdlc disciplines block in CLAUDE.md")
     ap.add_argument("--apply", action="store_true")
     a = ap.parse_args(argv)
+    _validate(a.repo, a.tier or TIERS[0])
     sources, sha = disciplines.fetch_sources()
     block = disciplines.render_block(sources, sha)
     if a.disciplines:

@@ -43,6 +43,13 @@ class RenderBlockTests(unittest.TestCase):
         self.assertIn("stated rationale", block)
         self.assertIn("https://github.com/jasoncookdesign/agentic-sdlc/blob/" + SHA + "/docs/lifecycle.md", block)
 
+    def test_code_fences_are_left_alone_and_levels_clamp_at_six(self):
+        src = [("disciplines/x.md", "# X\n\n```bash\n# a shell comment\n```\n\n##### Deep\n")]
+        block = d.render_block(src, SHA)
+        self.assertIn("\n# a shell comment\n", block)
+        self.assertIn("\n###### Deep\n", block)
+        self.assertNotIn("####### ", block)
+
     def test_empty_sources_rejected(self):
         with self.assertRaises(ValueError):
             d.render_block([], SHA)
@@ -74,6 +81,18 @@ class UpsertBlockTests(unittest.TestCase):
         once = d.upsert_block("# r\n", self.block)
         self.assertEqual(d.upsert_block(once, self.block), once)
 
+    def test_marker_quoted_in_prose_is_not_a_block(self):
+        text = "# r\n\nDon't edit the `" + d.BEGIN + "` region.\n\nKEEP-NOTES\n"
+        out = d.upsert_block(text, self.block)
+        self.assertIn("KEEP-NOTES", out)
+        self.assertTrue(out.startswith(text.rstrip()))
+        self.assertIn("TOKEN-TDD-7f3a", out)
+
+    def test_two_blocks_is_an_error(self):
+        text = self.block + "\n\nmiddle\n\n" + self.block + "\n"
+        with self.assertRaises(d.MalformedBlockError):
+            d.upsert_block(text, self.block)
+
     def test_unterminated_block_is_an_error(self):
         with self.assertRaises(d.MalformedBlockError):
             d.upsert_block("x\n" + d.BEGIN + " @abc1234 -->\nstuff\n", self.block)
@@ -96,6 +115,14 @@ class FetchSourcesTests(unittest.TestCase):
         self.assertEqual(len(content_calls), len(d.SOURCE_PATHS))
         for call in content_calls:
             self.assertIn("ref=" + SHA, call)
+            self.assertIn("Accept: application/vnd.github.raw", call)
+
+    def test_fetch_failure_reports_gh_stderr(self):
+        err = d.subprocess.CalledProcessError(1, ["gh"], stderr="gh: Not Found (HTTP 404)")
+        with mock.patch.object(d.subprocess, "run", side_effect=err):
+            with self.assertRaises(d.SourceFetchError) as cm:
+                d.fetch_sources()
+        self.assertIn("Not Found", str(cm.exception))
 
 
 if __name__ == "__main__":
