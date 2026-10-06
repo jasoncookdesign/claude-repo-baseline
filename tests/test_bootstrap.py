@@ -8,15 +8,15 @@ import bootstrap as b
 
 class PlanTests(unittest.TestCase):
     def test_repo_settings_call(self):
-        plan = b.repo_settings_calls("o/r", "live")
+        plan = b.repo_settings_calls("o/r", "standard")
         patch = plan[0]
         self.assertEqual(patch["method"], "PATCH")
         self.assertEqual(patch["path"], "repos/o/r")
         self.assertIs(patch["fields"]["delete_branch_on_merge"], True)
         self.assertIs(patch["fields"]["allow_auto_merge"], False)
 
-    def test_live_tier_protects_main(self):
-        plan = b.repo_settings_calls("o/r", "live")
+    def test_standard_tier_protects_main(self):
+        plan = b.repo_settings_calls("o/r", "standard")
         prot = [c for c in plan if c["path"].endswith("/branches/main/protection")]
         self.assertEqual(len(prot), 1)
         body = prot[0]["body"]
@@ -29,13 +29,13 @@ class PlanTests(unittest.TestCase):
         self.assertFalse([c for c in plan if "protection" in c["path"]])
 
     def test_files_for_tier(self):
-        self.assertIn(".github/workflows/delete-unmerged-pr-branch.yml", b.files_for_tier("live"))
-        self.assertIn("CLAUDE.md", b.files_for_tier("live"))
+        self.assertIn(".github/workflows/delete-unmerged-pr-branch.yml", b.files_for_tier("standard"))
+        self.assertIn("CLAUDE.md", b.files_for_tier("standard"))
         self.assertNotIn(".github/workflows/delete-unmerged-pr-branch.yml", b.files_for_tier("scratch"))
 
     def test_bad_inputs(self):
         with self.assertRaises(ValueError):
-            b.repo_settings_calls("no-slash", "live")
+            b.repo_settings_calls("no-slash", "standard")
         with self.assertRaises(ValueError):
             b.repo_settings_calls("o/r", "bogus")
 
@@ -44,6 +44,22 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(argv[:4], ["gh", "api", "-X", "PATCH"])
         self.assertIn("repos/o/r", argv)
         self.assertIn("a=true", argv)
+
+    def test_old_tier_names_rejected(self):
+        for old in ("live", "private"):
+            with self.assertRaises(ValueError):
+                b.repo_settings_calls("o/r", old)
+
+    def test_describe_call_shows_body(self):
+        plan = b.repo_settings_calls("o/r", "standard")
+        text = b.describe_call(plan[1])
+        self.assertIn("gh api -X PUT repos/o/r/branches/main/protection --input -", text)
+        self.assertIn('"enforce_admins": true', text)
+        self.assertIn('"required_approving_review_count": 0', text)
+
+    def test_describe_call_without_body_is_one_line(self):
+        plan = b.repo_settings_calls("o/r", "standard")
+        self.assertEqual(b.describe_call(plan[0]).count("\n"), 0)
 
 
 if __name__ == "__main__":

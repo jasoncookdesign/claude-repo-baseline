@@ -13,10 +13,9 @@ The baseline lives in the `claude-repo-baseline` repo (jasoncookdesign). Its `bo
 - The token has the `workflow` scope, or the push of `.github/workflows/` is rejected: `gh auth refresh -s workflow`.
 
 ## 2. Pick a tier
-- `live`: merging to main deploys (sites). Protects main, adds workflow and CLAUDE.md.
-- `private`: no deploy. Same files and protection.
-- `scratch`: settings and CLAUDE.md only, no protection, no workflow.
-If the repo's deploy behavior is unclear, ask which tier before applying.
+- `standard`: protects main (0 approvals, admins enforced, no force push), adds the cleanup workflow and `CLAUDE.md`. Use for anything real, deployed or not.
+- `scratch`: settings and `CLAUDE.md` only, no protection, no workflow. Use for throwaway repos.
+Whether merging deploys is recorded in the repo's `CLAUDE.md`, not in the tier. If it is unclear, ask.
 
 ## 3. Dry run, then apply
 `python3 bootstrap.py OWNER/REPO --tier TIER` prints the plan. Show it, get a go-ahead, then re-run with `--apply`. It sets delete-branch-on-merge and auto-merge off, protects main (0 approvals, admins enforced, no force push), clones to a temp dir and opens a `chore/claude-baseline` PR.
