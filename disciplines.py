@@ -47,7 +47,7 @@ UNMARKED = (
     (re.compile(r"(?m)^<!-- END agentic-sdlc disciplines\b.*$"), "an END marker without a BEGIN marker"),
     (re.compile(r"(?m)^#{1,6} +Engineering disciplines \(mandatory, every code task\)[ \t]*\r?$"),
      "an 'Engineering disciplines' heading outside a BEGIN/END block"),
-    (re.compile(r"(?m)^Generated from jasoncookdesign/agentic-sdlc\b.*$"),
+    (re.compile(r"(?m)^Generated from jasoncookdesign/agentic-sdlc(?=[ \t]|\r?$).*$"),
      "a 'Generated from jasoncookdesign/agentic-sdlc' line outside a BEGIN/END block"),
 )
 
@@ -69,6 +69,9 @@ def render_block(sources, sha):
         raise ValueError("no discipline sources to render")
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError(f"sha must be a full lowercase commit id, got {sha!r}")
+    for path, text in sources:
+        if BEGIN_LINE.search(text) or END_LINE.search(text):
+            raise ValueError(f"{path} contains a disciplines marker line, which would split the block")
     parts = [f"{BEGIN} @{sha[:7]} -->", PREAMBLE.format(repo=SOURCE_REPO, sha=sha, sha7=sha[:7])]
     parts += [_demote(text.strip()) for _, text in sources]
     parts.append(END)

@@ -161,7 +161,8 @@ def main(argv):
     try:
         return _run(a)
     except disciplines.MalformedBlockError as e:
-        print(f"{a.repo}: refusing to change CLAUDE.md, no PR opened: {e}", file=sys.stderr)
+        applied = " (repo settings were already applied; rerun after fixing CLAUDE.md)" if a.tier and a.apply else ""
+        print(f"{a.repo}: refusing to change CLAUDE.md, no PR opened{applied}: {e}", file=sys.stderr)
         return 1
 
 

@@ -143,6 +143,18 @@ class UnmarkedBlockTests(unittest.TestCase):
         unmarked = self.old.split("\n", 1)[1]
         self.assertRefused("# repo\n\n" + unmarked + "\n", "line 4 has an 'Engineering disciplines' heading")
 
+    def test_crlf_unmarked_block_with_trailing_spaces_is_refused(self):
+        unmarked = self.old.split("\n", 1)[1].replace(d.END, d.END + "  ").replace("\n", "\r\n")
+        self.assertRefused("# repo\r\n\r\n" + unmarked + "\r\n", "line 4")
+
+    def test_similar_repo_name_is_not_refused(self):
+        text = "# r\n\nGenerated from jasoncookdesign/agentic-sdlc-tools, by hand.\n"
+        self.assertIn("TOKEN-TDD-7f3a", d.upsert_block(text, self.block))
+
+    def test_sources_carrying_a_marker_line_are_rejected(self):
+        with self.assertRaises(ValueError):
+            d.render_block([("disciplines/x.md", "# X\n\n```\n" + d.END + "\n```\n")], SHA)
+
     def test_marked_block_with_its_own_heading_and_preamble_is_replaced(self):
         out = d.upsert_block("# repo\n\n" + self.old + "\n", self.block)
         self.assertNotIn("TOKEN-OLD-55aa", out)
