@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the baseline into ~/.claude: merge settings, hook, and CLAUDE.md block.
+"""Install the baseline into ~/.claude: merge settings, hooks, and CLAUDE.md block.
 
 Idempotent. Existing keys and rules are kept; backups are written as *.bak.
 Usage: python3 install_user.py [--dry-run]
@@ -15,19 +15,20 @@ END = "<!-- END claude-repo-baseline -->"
 HERE = pathlib.Path(__file__).resolve().parent
 
 
-def _fill(obj, hook_path):
+def _fill(obj, hooks_dir):
     if isinstance(obj, str):
-        return obj.replace("{HOOK}", hook_path)
+        return obj.replace("{HOOKS_DIR}", hooks_dir)
     if isinstance(obj, list):
-        return [_fill(x, hook_path) for x in obj]
+        return [_fill(x, hooks_dir) for x in obj]
     if isinstance(obj, dict):
-        return {k: _fill(v, hook_path) for k, v in obj.items()}
+        return {k: _fill(v, hooks_dir) for k, v in obj.items()}
     return obj
 
 
-def merge_settings(existing, template, hook_path):
+def merge_settings(existing, template, hooks_dir):
+    """Merge the template into existing settings; {HOOKS_DIR} becomes the installed hooks folder."""
     out = copy.deepcopy(existing)
-    tpl = _fill(template, hook_path)
+    tpl = _fill(template, hooks_dir)
     deny = out.setdefault("permissions", {}).setdefault("deny", [])
     for rule in tpl.get("permissions", {}).get("deny", []):
         if rule not in deny:
@@ -50,6 +51,11 @@ def merge_claude_md(existing, block):
     return existing + sep + body
 
 
+def hook_targets(src_root, dst_root):
+    """(src, dst) pairs for every hook script in src_root."""
+    return [(f, dst_root / f.name) for f in sorted(src_root.glob("*.py"))]
+
+
 def skill_targets(src_root, dst_root):
     """(src, dst) pairs for every file under src_root/<skill>/."""
     if not src_root.is_dir():
@@ -69,11 +75,11 @@ def _backup(path):
 def main(argv):
     dry = "--dry-run" in argv
     home = pathlib.Path.home() / ".claude"
-    hook_dst = home / "hooks" / "guard_merge.py"
+    hooks_dst = home / "hooks"
     settings_p, md_p = home / "settings.json", home / "CLAUDE.md"
     tpl = json.loads((HERE / "user" / "settings.json").read_text())
     existing = json.loads(settings_p.read_text()) if settings_p.exists() else {}
-    merged = merge_settings(existing, tpl, str(hook_dst))
+    merged = merge_settings(existing, tpl, str(hooks_dst))
     md = merge_claude_md(md_p.read_text() if md_p.exists() else "",
                          (HERE / "user" / "CLAUDE.md").read_text())
     if dry:
@@ -82,8 +88,9 @@ def main(argv):
         print(md)
         return 0
     home.mkdir(exist_ok=True)
-    (home / "hooks").mkdir(exist_ok=True)
-    shutil.copy2(HERE / "hooks" / "guard_merge.py", hook_dst)
+    hooks_dst.mkdir(exist_ok=True)
+    for src, dst in hook_targets(HERE / "hooks", hooks_dst):
+        shutil.copy2(src, dst)
     for src, dst in skill_targets(HERE / "skills", home / "skills"):
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)

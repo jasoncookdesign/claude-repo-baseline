@@ -25,7 +25,11 @@
     "PreToolUse": [
       {
         "matcher": "Bash|mcp__github__merge_pull_request|mcp__github__enable_pr_auto_merge",
-        "hooks": [{"type": "command", "command": "python3 {HOOK}"}]
+        "hooks": [{"type": "command", "command": "python3 {HOOKS_DIR}/guard_merge.py"}]
+      },
+      {
+        "matcher": "mcp__claude_ai_Higgsfield__.*",
+        "hooks": [{"type": "command", "command": "python3 {HOOKS_DIR}/higgsfield_gate.py", "onFailure": "block"}]
       }
     ]
   }
