@@ -103,6 +103,56 @@ class UpsertBlockTests(unittest.TestCase):
             d.upsert_block("x\n" + d.BEGIN + " @abc1234 -->\nstuff\n", self.block)
 
 
+class UnmarkedBlockTests(unittest.TestCase):
+    """Disciplines content outside a BEGIN/END pair would be duplicated by an append, so it is refused."""
+
+    def setUp(self):
+        self.block = d.render_block(SOURCES, SHA)
+        self.old = d.render_block([("disciplines/x.md", "# Old\n\nTOKEN-OLD-55aa\n")], "f" * 40)
+
+    def assertRefused(self, text, needle):
+        with self.assertRaises(d.MalformedBlockError) as cm:
+            d.upsert_block(text, self.block)
+        self.assertIn(needle, str(cm.exception))
+
+    def test_old_block_without_begin_marker_is_refused(self):
+        unmarked = self.old.split("\n", 1)[1]  # drop the BEGIN line, keep heading, preamble and END
+        self.assertRefused("# repo\n\n" + unmarked + "\n", "BEGIN")
+
+    def test_end_marker_without_begin_is_refused(self):
+        self.assertRefused("# repo\n\n" + d.END + "\n", "END marker")
+
+    def test_end_marker_before_a_marked_block_is_refused(self):
+        self.assertRefused("# repo\n\n" + d.END + "\n\n" + self.old + "\n", "END marker")
+
+    def test_generated_line_outside_a_block_is_refused(self):
+        line = "Generated from jasoncookdesign/agentic-sdlc at 1234567; edit the source repo, not this block."
+        self.assertRefused("# repo\n\n" + line + "\n", "Generated from")
+
+    def test_disciplines_heading_outside_a_block_is_refused(self):
+        self.assertRefused("# repo\n\n## Engineering disciplines (mandatory, every code task)\n\n- rules\n",
+                           "Engineering disciplines")
+
+    def test_begin_marker_without_a_commit_is_refused(self):
+        self.assertRefused("# repo\n\n" + d.BEGIN + " -->\nstuff\n" + d.END + "\n", "BEGIN")
+
+    def test_refusal_names_the_line(self):
+        self.assertRefused("# repo\n\nnotes\n\n" + d.END + "\n", "line 5")
+
+    def test_refusal_names_the_first_offending_line(self):
+        unmarked = self.old.split("\n", 1)[1]
+        self.assertRefused("# repo\n\n" + unmarked + "\n", "line 4 has an 'Engineering disciplines' heading")
+
+    def test_marked_block_with_its_own_heading_and_preamble_is_replaced(self):
+        out = d.upsert_block("# repo\n\n" + self.old + "\n", self.block)
+        self.assertNotIn("TOKEN-OLD-55aa", out)
+        self.assertEqual(out.count("Generated from jasoncookdesign/agentic-sdlc"), 1)
+
+    def test_prose_mentioning_the_disciplines_is_not_refused(self):
+        text = "# repo\n\nSee the Engineering disciplines section, generated from jasoncookdesign/agentic-sdlc.\n"
+        self.assertIn("TOKEN-TDD-7f3a", d.upsert_block(text, self.block))
+
+
 class FetchSourcesTests(unittest.TestCase):
     def test_fetches_each_path_at_one_pinned_commit(self):
         seen = []

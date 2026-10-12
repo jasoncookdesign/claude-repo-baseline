@@ -158,6 +158,14 @@ def main(argv):
     ap.add_argument("--apply", action="store_true")
     a = ap.parse_args(argv)
     _validate(a.repo, a.tier or TIERS[0])
+    try:
+        return _run(a)
+    except disciplines.MalformedBlockError as e:
+        print(f"{a.repo}: refusing to change CLAUDE.md, no PR opened: {e}", file=sys.stderr)
+        return 1
+
+
+def _run(a):
     sources, sha = disciplines.fetch_sources()
     block = disciplines.render_block(sources, sha)
     if a.disciplines:
