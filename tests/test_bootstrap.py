@@ -205,5 +205,34 @@ class DisciplinesBlockTests(unittest.TestCase):
         refresh.assert_not_called()
 
 
+class UnmarkedBlockRefusalTests(unittest.TestCase):
+    def test_disciplines_mode_refuses_unmarked_block_and_opens_no_pr(self):
+        unmarked = BLOCK.split("\n", 1)[1]  # an old block that lost its BEGIN marker
+        fake = FakeClone(claude_md="# repo\n\n" + unmarked + "\n")
+        err = io.StringIO()
+        with mock.patch.object(b.subprocess, "run", side_effect=fake), \
+             mock.patch.object(b.disciplines, "fetch_sources", return_value=([("disciplines/t.md", "# T\n")], "b" * 40)), \
+             quiet(), contextlib.redirect_stderr(err):
+            code = b.main(["o/r", "--disciplines", "--apply"])
+        self.assertEqual(code, 1)
+        self.assertIn("o/r", err.getvalue())
+        self.assertIn("no PR opened", err.getvalue())
+        self.assertIn("BEGIN", err.getvalue())
+        self.assertTrue(any(c.startswith("gh repo clone") for c in fake.calls))
+        self.assertFalse([c for c in fake.calls if c.startswith(("git add", "git commit", "git push", "gh pr create"))])
+
+
+    def test_tier_mode_refusal_says_settings_were_applied(self):
+        fake = FakeClone(claude_md="# r\n\n" + d.END + "\n")
+        err = io.StringIO()
+        with mock.patch.object(b.subprocess, "run", side_effect=fake), \
+             mock.patch.object(b.disciplines, "fetch_sources", return_value=([("disciplines/t.md", "# T\n")], "b" * 40)), \
+             quiet(), contextlib.redirect_stderr(err):
+            code = b.main(["o/r", "--tier", "scratch", "--apply"])
+        self.assertEqual(code, 1)
+        self.assertIn("repo settings were already applied", err.getvalue())
+        self.assertFalse([c for c in fake.calls if c.startswith(("git commit", "git push", "gh pr create"))])
+
+
 if __name__ == "__main__":
     unittest.main()

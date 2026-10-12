@@ -34,12 +34,22 @@ class SourceFetchError(RuntimeError):
 
 
 class MalformedBlockError(ValueError):
-    """CLAUDE.md has a BEGIN marker without a matching END marker."""
+    """CLAUDE.md has disciplines markers or content that don't form exactly one marked block."""
 
 
 BEGIN_LINE = re.compile(r"(?m)^<!-- BEGIN agentic-sdlc disciplines @[0-9a-f]{7} -->[ \t]*(?=\r?$)")
 END_LINE = re.compile(r"(?m)^<!-- END agentic-sdlc disciplines -->[ \t]*(?=\r?$)")
 HEADING = re.compile(r"^(#{1,6}) ")
+# Lines that belong only inside a marked block. Outside one they mean an old or hand-edited block
+# that an append would duplicate.
+UNMARKED = (
+    (re.compile(r"(?m)^<!-- BEGIN agentic-sdlc disciplines\b.*$"), "a BEGIN marker without a valid '@<sha7>'"),
+    (re.compile(r"(?m)^<!-- END agentic-sdlc disciplines\b.*$"), "an END marker without a BEGIN marker"),
+    (re.compile(r"(?m)^#{1,6} +Engineering disciplines \(mandatory, every code task\)[ \t]*\r?$"),
+     "an 'Engineering disciplines' heading outside a BEGIN/END block"),
+    (re.compile(r"(?m)^Generated from jasoncookdesign/agentic-sdlc(?=[ \t]|\r?$).*$"),
+     "a 'Generated from jasoncookdesign/agentic-sdlc' line outside a BEGIN/END block"),
+)
 
 
 def _demote(markdown, levels=2):
@@ -59,6 +69,9 @@ def render_block(sources, sha):
         raise ValueError("no discipline sources to render")
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError(f"sha must be a full lowercase commit id, got {sha!r}")
+    for path, text in sources:
+        if BEGIN_LINE.search(text) or END_LINE.search(text):
+            raise ValueError(f"{path} contains a disciplines marker line, which would split the block")
     parts = [f"{BEGIN} @{sha[:7]} -->", PREAMBLE.format(repo=SOURCE_REPO, sha=sha, sha7=sha[:7])]
     parts += [_demote(text.strip()) for _, text in sources]
     parts.append(END)
@@ -73,10 +86,26 @@ def block_sha7(block):
     return m.group(0).split("@", 1)[1][:7]
 
 
+def _refuse_unmarked(text, span):
+    """Raise, naming the first offending line, if disciplines markers or content sit outside the
+    marked block span (start, end)."""
+    hits = [(m.start(), what) for pattern, what in UNMARKED for m in pattern.finditer(text)
+            if not (span and span[0] <= m.start() < span[1])]
+    if hits:
+        pos, what = min(hits)
+        raise MalformedBlockError(
+            f"CLAUDE.md line {text.count(chr(10), 0, pos) + 1} has {what}. It looks like an unmarked "
+            "disciplines block, which a refresh would duplicate. Delete the old block and rerun.")
+
+
 def upsert_block(text, block):
-    """Replace the block in place, or append it. Markers count only on their own line."""
+    """Replace the block in place, or append it. Markers count only on their own line.
+
+    Refuses (MalformedBlockError) rather than appending when disciplines content sits outside
+    the one BEGIN/END pair, so an old unmarked block is never duplicated."""
     begins = list(BEGIN_LINE.finditer(text))
     if not begins:
+        _refuse_unmarked(text, None)
         nl = "\r\n" if "\r\n" in text else "\n"
         return (text.rstrip() + nl + nl if text.strip() else "") + block + nl
     if len(begins) > 1:
@@ -84,6 +113,7 @@ def upsert_block(text, block):
     end = END_LINE.search(text, begins[0].end())
     if end is None:
         raise MalformedBlockError("found the BEGIN marker but no END marker")
+    _refuse_unmarked(text, (begins[0].start(), end.end()))
     return text[:begins[0].start()] + block + text[end.end():]
 
 
