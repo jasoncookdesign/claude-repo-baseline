@@ -111,7 +111,7 @@ class GenerateGateTests(GateCase):
             self.token(name="GEN-01.g.tmp", body=json.dumps({"version": 1, "gen_id": "GEN-01", "created": NOW})),
         ]
         self.assertDenied(self.run_hook(event(P + "generate_video", single())))
-        self.assertTrue(all(p.exists() for p in bad[-1:]))
+        self.assertTrue(all(p.exists() for p in bad))  # left alone, not consumed
 
     def test_one_token_per_call_oldest_first(self):
         old, new = self.token("GEN-01", age=60), self.token("GEN-03", age=5)
@@ -119,9 +119,38 @@ class GenerateGateTests(GateCase):
         self.assertFalse(old.exists())
         self.assertTrue(new.exists())
 
-    def test_variants_of_one_request_need_one_token(self):
+    def test_variants_need_one_token_each(self):
+        a = self.token("GEN-01")
+        self.assertDenied(self.run_hook(event(P + "generate_video", single(count=2))), "needs 2")
+        self.assertTrue(a.exists())
+        self.token("GEN-01")
+        self.assertAllowed(self.run_hook(event(P + "generate_video", single(count=2))))
+        self.assertEqual(list(self.gate.glob("*.json")), [])
+
+    def test_odd_count_is_denied(self):
         self.token()
-        self.assertAllowed(self.run_hook(event(P + "generate_video", single(count=4))))
+        for bad in (0, -1, 1.5, "2", True):
+            self.assertDenied(self.run_hook(event(P + "generate_video", single(count=bad))))
+
+    def test_single_call_without_params_needs_a_token(self):
+        self.assertDenied(self.run_hook(event(P + "generate_video", {})))
+        self.token()
+        self.assertAllowed(self.run_hook(event(P + "generate_video", {})))
+
+    def test_symlinked_token_does_not_count(self):
+        real = self.token("GEN-01", name="elsewhere.txt")
+        (self.gate / "GEN-01.a.json").symlink_to(real)
+        (self.gate / "GEN-01.b.json").symlink_to(real)
+        self.assertDenied(self.run_hook(event(P + "generate_video", single())))
+        self.assertTrue(real.exists())
+
+    def test_gate_dir_writable_by_others_denies(self):
+        self.token()
+        os.chmod(self.gate, 0o777)
+        self.addCleanup(os.chmod, self.gate, 0o700)
+        self.assertDenied(self.run_hook(event(P + "generate_video", single())), "0700")
+        os.chmod(self.gate, 0o720)
+        self.assertDenied(self.run_hook(event(P + "generate_video", single())), "0700")
 
     def test_batch_needs_one_token_per_request(self):
         a, b = self.token("GEN-01"), self.token("GEN-03")
@@ -155,7 +184,7 @@ class OtherToolTests(GateCase):
         t = self.token()
         for tool in ("balance", "transactions", "jobs_wait", "show_generation_by_ids", "models_explore",
                      "media_upload", "media_confirm", "list_projects", "get_preferences", "ads_studio_quote",
-                     "ai_influencer_prepare"):
+                     "ai_influencer_prepare", "create_project", "create_folder", "show_marketing_studio_v2"):
             self.assertAllowed(self.run_hook(event(P + tool, {"x": 1})))
         self.assertTrue(t.exists())
 
@@ -164,7 +193,8 @@ class OtherToolTests(GateCase):
         for tool in ("execute_preset", "motion_control", "reframe", "upscale_image", "upscale_video",
                      "outpaint_image", "remove_background", "generate_3d", "apps_invoke",
                      "ads_studio_generate", "ai_influencer_generate", "scene_builder_3d_generate_video",
-                     "shorts_studio_create", "dubbing", "voice_change", "create_voice"):
+                     "shorts_studio_create", "dubbing", "voice_change", "create_voice",
+                     "scene_builder_3d_query_python", "scene_builder_3d_run_python", "update_preferences"):
             self.assertAsked(self.run_hook(event(P + tool, {"x": 1})), tool)
         self.assertTrue(t.exists())  # a Reel token never pays for something else
 
@@ -201,6 +231,7 @@ class CommandLineTests(GateCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("/reels:assets", r.stderr)
         r = self.cli(event(P + "upscale_video", {}))
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
         self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"], "ask")
         self.assertEqual(self.cli("garbage").returncode, 2)
 

@@ -6,7 +6,8 @@ Installed with matcher `mcp__claude_ai_Higgsfield__.*` and onFailure "block".
 - generate_image / generate_video / generate_audio and their _batch variants need one single-use
   gate token per request. claude-skills `/reels:assets` writes a token on
   `reels.py record RUN GEN-ID submitted`, which runs the same check as `check-submission` and
-  counts the attempt. A token lives TOKEN_TTL_SECONDS and is deleted when used. No token: deny.
+  counts the attempt. A token lives TOKEN_TTL_SECONDS and is deleted when the hook allows the call
+  (whether or not Higgsfield then submits a job). A call with count N needs N tokens. No token: deny.
   A cost preflight (`get_cost: true` on a single call) spends nothing and passes.
 - Read-only and free tools (READ_ONLY) pass untouched.
 - Every other Higgsfield tool, including ones added later, may spend credits outside the Reel
@@ -41,11 +42,11 @@ READ_ONLY = {
     "ads_studio_quote", "ads_studio_get_brand", "ads_studio_get_product", "ads_studio_get_run",
     "ads_studio_list_brands", "ads_studio_list_products", "ads_studio_list_runs",
     "ai_influencer_get_options", "ai_influencer_get_settings", "ai_influencer_list_presets",
-    "ai_influencer_prepare",
+    "ai_influencer_prepare", "create_project", "create_folder", "show_marketing_studio_v2",
     "scene_builder_3d_get_artifact", "scene_builder_3d_get_blend", "scene_builder_3d_get_generation",
     "scene_builder_3d_get_glb", "scene_builder_3d_get_operation", "scene_builder_3d_get_project",
     "scene_builder_3d_list_generations", "scene_builder_3d_list_projects", "scene_builder_3d_search_assets",
-    "scene_builder_3d_show_scene", "scene_builder_3d_query_python",
+    "scene_builder_3d_show_scene",
     "shorts_studio_list_presets", "shorts_studio_list_sessions", "shorts_studio_status",
     "video_analysis_jobs", "video_analysis_status",
     "tiktok_accounts", "tiktok_music_trending", "tiktok_publish_status", "website_status",
@@ -75,20 +76,27 @@ def _params(tool_input):
 
 
 def _requests_needed(tool, tool_input):
-    """Tokens this call needs: 0 for a cost preflight, 1 per request otherwise."""
+    """Tokens this call needs: 0 for a cost preflight, otherwise 1 per request and per variant."""
     if tool in GATED_BATCH:
         reqs = tool_input.get("requests")
         if not isinstance(reqs, list) or not reqs:
             raise Deny(f"{tool}: can't count the requests in this batch, so it is refused. {HOW_TO}")
         return len(reqs)
     params = _params(tool_input)
-    if params is not None and params.get("get_cost") is True:
+    if params is None:
+        return 1
+    if params.get("get_cost") is True:
         return 0
-    return 1
+    count = params.get("count", 1)
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise Deny(f"{tool}: can't read count {count!r}, so the call is refused. {HOW_TO}")
+    return count
 
 
 def _read_token(path, now):
     """('valid' | 'expired', created), or None when the file isn't a token."""
+    if path.is_symlink() or not path.is_file():
+        return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -106,7 +114,17 @@ def _read_token(path, now):
     return ("valid" if age <= TOKEN_TTL_SECONDS else "expired"), created
 
 
+def _check_dir(gate_dir, tool):
+    try:
+        st = gate_dir.stat()
+    except OSError:
+        raise Deny(f"{tool}: no gate tokens ({gate_dir} doesn't exist). {HOW_TO}") from None
+    if st.st_uid != os.getuid() or st.st_mode & 0o077:
+        raise Deny(f"{tool}: {gate_dir} must be yours with mode 0700 before its tokens count. {HOW_TO}")
+
+
 def _consume(gate_dir, needed, now, tool):
+    _check_dir(gate_dir, tool)
     try:
         paths = sorted(gate_dir.glob("GEN-*.json"))
     except OSError:
