@@ -10,6 +10,9 @@ Installed with matcher `mcp__claude_ai_Higgsfield__.*` and onFailure "block".
   (whether or not Higgsfield then submits a job). A call with count N needs N tokens. Too few tokens
   (none, expired, or a missing gate folder): no token is consumed and the call returns `ask`, a
   permission prompt for Jason. A token folder that isn't his, mode 0700, still denies.
+- Open switch: while <gate dir>/open-until holds a Unix time in the future (at most 24 hours ahead),
+  the gated generate calls and the creation tools in OPEN_COVERS pass without a token. Only Jason
+  writes the file; it expires on its own. Publishing, deploy and unknown tools still ask.
   A cost preflight (`get_cost: true` on a single call) spends nothing and passes.
 - Read-only and free tools (READ_ONLY) pass untouched.
 - Every other Higgsfield tool, including ones added later, may spend credits outside the Reel
@@ -40,7 +43,7 @@ READ_ONLY = {
     "list_website_categories", "models_explore", "get_presets", "get_preset_instructions",
     "get_workflow_instructions", "get_workflow_bundle_file", "get_explainer_presets", "get_preferences",
     "resolve_explainer_preset", "apps_search", "apps_describe",
-    "media_upload", "media_confirm", "media_import_url", "media_upload_widget",
+    "manage_reference_elements", "media_upload", "media_confirm", "media_import_url", "media_upload_widget",
     "ads_studio_quote", "ads_studio_get_brand", "ads_studio_get_product", "ads_studio_get_run",
     "ads_studio_list_brands", "ads_studio_list_products", "ads_studio_list_runs",
     "ai_influencer_get_options", "ai_influencer_get_settings", "ai_influencer_list_presets",
@@ -52,6 +55,14 @@ READ_ONLY = {
     "shorts_studio_list_presets", "shorts_studio_list_sessions", "shorts_studio_status",
     "video_analysis_jobs", "video_analysis_status",
     "tiktok_accounts", "tiktok_music_trending", "tiktok_publish_status", "website_status",
+}
+OPEN_FILE = "open-until"
+MAX_OPEN_SECONDS = 24 * 60 * 60
+OPEN_COVERS = {
+    "execute_preset", "motion_control", "reframe", "upscale_image", "upscale_video", "outpaint_image",
+    "remove_background", "generate_3d", "apps_invoke", "ads_studio_generate", "ai_influencer_generate",
+    "scene_builder_3d_generate_video", "scene_builder_3d_generate_angles", "shorts_studio_create", "dubbing",
+    "voice_change", "create_voice", "create_voice_from_confirmed_audio",
 }
 _GEN_ID_RE = re.compile(r"^GEN-\d+$")
 HOW_TO = (f"Paid Higgsfield generations go through /reels:assets: run `reels.py check-submission RUN.md GEN-ID` "
@@ -164,6 +175,18 @@ def _consume(gate_dir, needed, now, tool):
         raise Deny(f"{tool}: gate tokens were taken by another call. {HOW_TO}")
 
 
+def _is_open(gate_dir, now):
+    """True while Jason's open-until file names a time ahead of now, within MAX_OPEN_SECONDS."""
+    p = gate_dir / OPEN_FILE
+    try:
+        if p.is_symlink() or not p.is_file():
+            return False
+        until = float(p.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return False
+    return now < until <= now + MAX_OPEN_SECONDS
+
+
 def _ask(tool, detail=""):
     reason = (f"Higgsfield {tool} may spend credits and isn't part of the gated Reel workflow"
               f"{f' ({detail})' if detail else ''}. Allow only if Jason asked for this specific call.")
@@ -185,11 +208,26 @@ def main_with(stdin_text, gate_dir=None, now=None):
         tool = name[len(PREFIX):]
         if tool in READ_ONLY:
             return 0, "", ""
+        gate_dir = gate_dir or default_gate_dir()
+        now = time.time() if now is None else now
         if tool not in GATED and tool not in GATED_BATCH:
+            if tool in OPEN_COVERS:
+                try:
+                    _check_dir(gate_dir, tool)
+                except (Deny, NoTokens):  # an unusable gate folder never opens anything
+                    return 0, _ask(tool), ""
+                if _is_open(gate_dir, now):
+                    return 0, "", ""
             return 0, _ask(tool), ""
         needed = _requests_needed(tool, tool_input)
         if needed:
-            _consume(gate_dir or default_gate_dir(), needed, time.time() if now is None else now, tool)
+            try:
+                _check_dir(gate_dir, tool)
+            except NoTokens:
+                return 0, _ask(tool, "no gate token"), ""
+            if _is_open(gate_dir, now):
+                return 0, "", ""
+            _consume(gate_dir, needed, now, tool)
         return 0, "", ""
     except NoTokens as exc:
         return 0, _ask(tool, str(exc)), ""
