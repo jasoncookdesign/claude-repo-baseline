@@ -7,7 +7,9 @@ Installed with matcher `mcp__claude_ai_Higgsfield__.*` and onFailure "block".
   gate token per request. claude-skills `/reels:assets` writes a token on
   `reels.py record RUN GEN-ID submitted`, which runs the same check as `check-submission` and
   counts the attempt. A token lives TOKEN_TTL_SECONDS and is deleted when the hook allows the call
-  (whether or not Higgsfield then submits a job). A call with count N needs N tokens. No token: deny.
+  (whether or not Higgsfield then submits a job). A call with count N needs N tokens. Too few tokens
+  (none, expired, or a missing gate folder): no token is consumed and the call returns `ask`, a
+  permission prompt for Jason. A token folder that isn't his, mode 0700, still denies.
   A cost preflight (`get_cost: true` on a single call) spends nothing and passes.
 - Read-only and free tools (READ_ONLY) pass untouched.
 - Every other Higgsfield tool, including ones added later, may spend credits outside the Reel
@@ -59,6 +61,10 @@ HOW_TO = (f"Paid Higgsfield generations go through /reels:assets: run `reels.py 
 
 class Deny(Exception):
     pass
+
+
+class NoTokens(Exception):
+    """Too few valid gate tokens: the call goes to Jason as a permission prompt."""
 
 
 def default_gate_dir():
@@ -118,7 +124,7 @@ def _check_dir(gate_dir, tool):
     try:
         st = gate_dir.stat()
     except OSError:
-        raise Deny(f"{tool}: no gate tokens ({gate_dir} doesn't exist). {HOW_TO}") from None
+        raise NoTokens("no gate token") from None
     if st.st_uid != os.getuid() or st.st_mode & 0o077:
         raise Deny(f"{tool}: {gate_dir} must be yours with mode 0700 before its tokens count. {HOW_TO}")
 
@@ -142,8 +148,9 @@ def _consume(gate_dir, needed, now, tool):
             valid.append((created, p.name, p))
     valid.sort()
     if len(valid) < needed:
-        note = f" ({expired} expired token(s) removed)" if expired else ""
-        raise Deny(f"{tool}: needs {needed} gate token(s), found {len(valid)}{note}. {HOW_TO}")
+        note = f", {expired} expired token(s) removed" if expired else ""
+        found = f"needs {needed} gate token(s), found {len(valid)}" if valid else "no gate token"
+        raise NoTokens(f"{found}{note}")
     used = 0
     for _, _, p in valid:
         if used == needed:
@@ -157,9 +164,9 @@ def _consume(gate_dir, needed, now, tool):
         raise Deny(f"{tool}: gate tokens were taken by another call. {HOW_TO}")
 
 
-def _ask(tool):
-    reason = (f"Higgsfield {tool} may spend credits and isn't part of the gated Reel workflow. "
-              "Allow only if Jason asked for this specific call.")
+def _ask(tool, detail=""):
+    reason = (f"Higgsfield {tool} may spend credits and isn't part of the gated Reel workflow"
+              f"{f' ({detail})' if detail else ''}. Allow only if Jason asked for this specific call.")
     return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
                                               "permissionDecisionReason": reason}})
 
@@ -184,6 +191,8 @@ def main_with(stdin_text, gate_dir=None, now=None):
         if needed:
             _consume(gate_dir or default_gate_dir(), needed, time.time() if now is None else now, tool)
         return 0, "", ""
+    except NoTokens as exc:
+        return 0, _ask(tool, str(exc)), ""
     except Deny as exc:
         return 2, "", f"higgsfield gate: {exc}"
     except Exception as exc:  # fail closed

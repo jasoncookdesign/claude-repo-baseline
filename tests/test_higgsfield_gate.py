@@ -64,7 +64,7 @@ class GateCase(unittest.TestCase):
     def assertAllowed(self, result):
         self.assertEqual(result, (0, "", ""))
 
-    def assertAsked(self, result, tool):
+    def assertAsked(self, result, tool, *needles):
         code, out, err = result
         self.assertEqual(code, 0, err)
         decision = json.loads(out)["hookSpecificOutput"]
@@ -72,32 +72,33 @@ class GateCase(unittest.TestCase):
         self.assertEqual(decision["permissionDecision"], "ask")
         self.assertIn(tool, decision["permissionDecisionReason"])
         self.assertIn("credits", decision["permissionDecisionReason"])
+        for n in needles:
+            self.assertIn(n, decision["permissionDecisionReason"])
 
 
 class GenerateGateTests(GateCase):
-    def test_denied_without_token(self):
+    def test_asks_without_token(self):
         for tool in ("generate_video", "generate_image", "generate_audio"):
-            self.assertDenied(self.run_hook(event(P + tool, single())), "/reels:assets", "check-submission",
-                              "record")
+            self.assertAsked(self.run_hook(event(P + tool, single())), tool, "no gate token")
 
     def test_allowed_once_with_valid_token_which_is_consumed(self):
         t = self.token()
         self.assertAllowed(self.run_hook(event(P + "generate_video", single())))
         self.assertFalse(t.exists())
-        self.assertDenied(self.run_hook(event(P + "generate_video", single())))
+        self.assertAsked(self.run_hook(event(P + "generate_video", single())), "generate_video", "no gate token")
 
-    def test_expired_token_denied_and_removed(self):
+    def test_expired_token_asks_and_is_removed(self):
         t = self.token(age=hg.TOKEN_TTL_SECONDS + 1)
-        self.assertDenied(self.run_hook(event(P + "generate_image", single())), "expired")
+        self.assertAsked(self.run_hook(event(P + "generate_image", single())), "generate_image", "expired")
         self.assertFalse(t.exists())
 
     def test_token_just_inside_ttl_allowed(self):
         self.token(age=hg.TOKEN_TTL_SECONDS - 1)
         self.assertAllowed(self.run_hook(event(P + "generate_image", single())))
 
-    def test_future_dated_token_denied(self):
+    def test_future_dated_token_asks(self):
         t = self.token(age=-120)
-        self.assertDenied(self.run_hook(event(P + "generate_video", single())))
+        self.assertAsked(self.run_hook(event(P + "generate_video", single())), "generate_video", "no gate token")
         self.assertTrue(t.exists())
 
     def test_malformed_tokens_never_count(self):
@@ -110,7 +111,7 @@ class GenerateGateTests(GateCase):
             self.token(name="GEN-01.f.json", body=json.dumps({"version": 1, "gen_id": "GEN-01", "created": True})),
             self.token(name="GEN-01.g.tmp", body=json.dumps({"version": 1, "gen_id": "GEN-01", "created": NOW})),
         ]
-        self.assertDenied(self.run_hook(event(P + "generate_video", single())))
+        self.assertAsked(self.run_hook(event(P + "generate_video", single())), "generate_video", "no gate token")
         self.assertTrue(all(p.exists() for p in bad))  # left alone, not consumed
 
     def test_one_token_per_call_oldest_first(self):
@@ -121,7 +122,7 @@ class GenerateGateTests(GateCase):
 
     def test_variants_need_one_token_each(self):
         a = self.token("GEN-01")
-        self.assertDenied(self.run_hook(event(P + "generate_video", single(count=2))), "needs 2")
+        self.assertAsked(self.run_hook(event(P + "generate_video", single(count=2))), "generate_video", "needs 2")
         self.assertTrue(a.exists())
         self.token("GEN-01")
         self.assertAllowed(self.run_hook(event(P + "generate_video", single(count=2))))
@@ -133,7 +134,7 @@ class GenerateGateTests(GateCase):
             self.assertDenied(self.run_hook(event(P + "generate_video", single(count=bad))))
 
     def test_single_call_without_params_needs_a_token(self):
-        self.assertDenied(self.run_hook(event(P + "generate_video", {})))
+        self.assertAsked(self.run_hook(event(P + "generate_video", {})), "generate_video", "no gate token")
         self.token()
         self.assertAllowed(self.run_hook(event(P + "generate_video", {})))
 
@@ -141,7 +142,7 @@ class GenerateGateTests(GateCase):
         real = self.token("GEN-01", name="elsewhere.txt")
         (self.gate / "GEN-01.a.json").symlink_to(real)
         (self.gate / "GEN-01.b.json").symlink_to(real)
-        self.assertDenied(self.run_hook(event(P + "generate_video", single())))
+        self.assertAsked(self.run_hook(event(P + "generate_video", single())), "generate_video", "no gate token")
         self.assertTrue(real.exists())
 
     def test_gate_dir_writable_by_others_denies(self):
@@ -154,7 +155,7 @@ class GenerateGateTests(GateCase):
 
     def test_batch_needs_one_token_per_request(self):
         a, b = self.token("GEN-01"), self.token("GEN-03")
-        self.assertDenied(self.run_hook(event(P + "generate_video_batch", batch(3))), "3", "2")
+        self.assertAsked(self.run_hook(event(P + "generate_video_batch", batch(3))), "generate_video_batch", "needs 3")
         self.assertTrue(a.exists() and b.exists())  # nothing consumed on a refusal
         self.assertAllowed(self.run_hook(event(P + "generate_video_batch", batch(2))))
         self.assertFalse(a.exists() or b.exists())
@@ -171,12 +172,14 @@ class GenerateGateTests(GateCase):
                                                {"params": json.dumps(single(get_cost=True)["params"])})))
 
     def test_non_boolean_get_cost_is_spending(self):
-        self.assertDenied(self.run_hook(event(P + "generate_video", single(get_cost="true"))))
-        self.assertDenied(self.run_hook(event(P + "generate_video", {"params": "not json"})))
+        self.assertAsked(self.run_hook(event(P + "generate_video", single(get_cost="true"))), "generate_video",
+                         "no gate token")
+        self.assertAsked(self.run_hook(event(P + "generate_video", {"params": "not json"})), "generate_video",
+                         "no gate token")
 
-    def test_missing_gate_dir_denies(self):
+    def test_missing_gate_dir_asks(self):
         self.gate.rmdir()
-        self.assertDenied(self.run_hook(event(P + "generate_video", single())), "/reels:assets")
+        self.assertAsked(self.run_hook(event(P + "generate_video", single())), "generate_video", "no gate token")
 
 
 class OtherToolTests(GateCase):
@@ -228,8 +231,8 @@ class CommandLineTests(GateCase):
         self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
         self.assertFalse(p.exists())
         r = self.cli(event(P + "generate_video", single()))
-        self.assertEqual(r.returncode, 2)
-        self.assertIn("/reels:assets", r.stderr)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"], "ask")
         r = self.cli(event(P + "upscale_video", {}))
         self.assertEqual((r.returncode, r.stderr), (0, ""))
         self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"], "ask")
