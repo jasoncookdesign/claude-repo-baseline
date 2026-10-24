@@ -187,7 +187,8 @@ class OtherToolTests(GateCase):
         t = self.token()
         for tool in ("balance", "transactions", "jobs_wait", "show_generation_by_ids", "models_explore",
                      "media_upload", "media_confirm", "list_projects", "get_preferences", "ads_studio_quote",
-                     "ai_influencer_prepare", "create_project", "create_folder", "show_marketing_studio_v2"):
+                     "ai_influencer_prepare", "create_project", "create_folder", "show_marketing_studio_v2",
+                     "manage_reference_elements"):
             self.assertAllowed(self.run_hook(event(P + tool, {"x": 1})))
         self.assertTrue(t.exists())
 
@@ -206,6 +207,85 @@ class OtherToolTests(GateCase):
 
     def test_tools_outside_higgsfield_pass(self):
         self.assertAllowed(self.run_hook(event("Bash", {"command": "ls"})))
+
+
+class OpenSwitchTests(GateCase):
+    """gate dir/open-until holds a Unix time written by Jason; until then spending tools pass without a token."""
+
+    def open_until(self, ahead=3600.0, body=None, name="open-until"):
+        p = self.gate / name
+        p.write_text(body if body is not None else str(NOW + ahead))
+        return p
+
+    def test_generate_passes_without_token_while_open_and_consumes_nothing(self):
+        t = self.token()
+        self.open_until()
+        for tool in ("generate_image", "generate_video", "generate_audio"):
+            self.assertAllowed(self.run_hook(event(P + tool, single())))
+        self.assertAllowed(self.run_hook(event(P + "generate_image_batch", batch(3))))
+        self.assertTrue(t.exists())
+
+    def test_creation_tools_pass_while_open(self):
+        self.open_until()
+        for tool in ("execute_preset", "motion_control", "reframe", "upscale_image", "upscale_video",
+                     "outpaint_image", "remove_background", "generate_3d", "apps_invoke", "ads_studio_generate",
+                     "ai_influencer_generate", "scene_builder_3d_generate_video", "shorts_studio_create",
+                     "dubbing", "voice_change", "create_voice"):
+            self.assertAllowed(self.run_hook(event(P + tool, {"x": 1})))
+
+    def test_outward_and_unknown_tools_still_ask_while_open(self):
+        self.open_until()
+        for tool in ("publish_project", "deploy_website", "publish_website", "tiktok_prepare_publish",
+                     "delete_project", "update_preferences", "brand_new_tool"):
+            self.assertAsked(self.run_hook(event(P + tool, {"x": 1})), tool)
+
+    def test_expired_switch_asks(self):
+        self.open_until(ahead=-1)
+        self.assertAsked(self.run_hook(event(P + "generate_video", single())), "generate_video")
+        self.assertAsked(self.run_hook(event(P + "upscale_image", {})), "upscale_image")
+
+    def test_switch_too_far_in_the_future_asks(self):
+        self.open_until(ahead=hg.MAX_OPEN_SECONDS + 60)
+        self.assertAsked(self.run_hook(event(P + "generate_video", single())), "generate_video")
+        self.open_until(ahead=hg.MAX_OPEN_SECONDS - 60)
+        self.assertAllowed(self.run_hook(event(P + "generate_video", single())))
+
+    def test_malformed_switch_asks(self):
+        for body in ("", "soon", "-5", "nan", "inf", json.dumps({"until": NOW + 60})):
+            self.open_until(body=body)
+            self.assertAsked(self.run_hook(event(P + "generate_video", single())), "generate_video")
+
+    def test_symlinked_switch_asks(self):
+        real = self.gate / "elsewhere.txt"
+        real.write_text(str(NOW + 60))
+        (self.gate / "open-until").symlink_to(real)
+        self.assertAsked(self.run_hook(event(P + "generate_video", single())), "generate_video")
+
+    def test_insecure_gate_dir_denies_even_while_open(self):
+        self.open_until()
+        os.chmod(self.gate, 0o777)
+        self.addCleanup(os.chmod, self.gate, 0o700)
+        self.assertDenied(self.run_hook(event(P + "generate_video", single())), "0700")
+
+    def test_creation_tools_ask_when_gate_dir_is_insecure_or_missing(self):
+        self.open_until()
+        os.chmod(self.gate, 0o777)
+        try:
+            self.assertAsked(self.run_hook(event(P + "upscale_image", {})), "upscale_image")
+        finally:
+            os.chmod(self.gate, 0o700)
+        (self.gate / "open-until").unlink()
+        self.gate.rmdir()
+        self.assertAsked(self.run_hook(event(P + "upscale_image", {})), "upscale_image")
+
+    def test_odd_count_and_missing_batch_list_still_denied_while_open(self):
+        self.open_until()
+        self.assertDenied(self.run_hook(event(P + "generate_video", single(count=0))))
+        self.assertDenied(self.run_hook(event(P + "generate_image_batch", {})))
+
+    def test_open_switch_does_not_make_a_missing_dir_open(self):
+        self.gate.rmdir()
+        self.assertAsked(self.run_hook(event(P + "generate_video", single())), "generate_video")
 
 
 class MalformedInputTests(GateCase):
