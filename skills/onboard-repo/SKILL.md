@@ -16,7 +16,7 @@ The baseline lives in the `claude-repo-baseline` repo (jasoncookdesign). Its `bo
 - `standard`: protects main (0 approvals, admins enforced, no force push), adds the cleanup workflow and `CLAUDE.md`. Use for anything real, deployed or not.
 - `scratch`: settings and `CLAUDE.md` only, no protection, no workflow. Use for throwaway repos.
 Whether merging deploys is recorded in the repo's `CLAUDE.md`, not in the tier. If it is unclear, ask.
-Private repos on GitHub Free can't have branch protection, so use `scratch` for them. The local deny list still blocks pushes to main.
+Visibility does not pick the tier: private repos use `standard` too. Protection on private repos needs a paid GitHub plan; if the API answers with an upgrade error, fall back to `scratch` and note that the local deny list is the only guard on main.
 
 ## 3. Dry run, then apply
 `python3 bootstrap.py OWNER/REPO --tier TIER` prints the plan. Show it, get a go-ahead, then re-run with `--apply`. It sets delete-branch-on-merge and auto-merge off, protects main (0 approvals, admins enforced, no force push), clones to a temp dir and opens a `chore/claude-baseline` PR. An existing `CLAUDE.md` is kept, with the disciplines block appended. A missing one is created from the template, block included.
